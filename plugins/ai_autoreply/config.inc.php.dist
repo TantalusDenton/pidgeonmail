@@ -1,0 +1,32 @@
+<?php
+
+/*
+ +-----------------------------------------------------------------------+
+ | Configuration file for AI Auto-Reply plugin                           |
+ |                                                                       |
+ | Copy this file to config.inc.php and modify as needed.                |
+ +-----------------------------------------------------------------------+
+*/
+
+// Enable AI auto-reply feature (default: false)
+// When enabled, the plugin will generate AI-powered draft replies for incoming emails
+$config['ai_autoreply_enabled'] = false;
+
+// Enable auto-send of AI replies (default: false)
+// WARNING: When enabled, AI-generated replies will be automatically sent!
+// Use with caution. Several safeguards are in place:
+// - Rate limit: Max 10 auto-sends per hour
+// - No duplicate replies to same thread
+// - Skip messages older than 1 hour
+// - Skip group emails (>3 recipients)
+// - Skip own emails (identity check)
+// - Skip auto-generated/mailing list emails
+$config['ai_autoreply_autosend'] = false;
+
+// OpenAI API key (required for AI functionality)
+// Get your API key from https://platform.openai.com/api-keys
+$config['ai_autoreply_openai_key'] = '';
+
+// OpenAI model to use (default: 'gpt-4o-mini')
+// Options: 'gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'
+$config['ai_autoreply_model'] = 'gpt-4o-mini';
