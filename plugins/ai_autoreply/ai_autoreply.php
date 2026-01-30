@@ -21,6 +21,9 @@ class ai_autoreply extends rcube_plugin
     /** @var array Rate limiting cache */
     private static $rate_limit_cache = [];
 
+    /** @var array|null Cached user style profile */
+    private $user_style_cache = null;
+
     /**
      * Plugin initialization.
      */
@@ -212,6 +215,129 @@ class ai_autoreply extends rcube_plugin
     }
 
     /**
+     * Get user's writing style profile from style learning service.
+     *
+     * @return array|null Style profile or null if unavailable
+     */
+    private function get_user_style()
+    {
+        // Return cached style if available
+        if ($this->user_style_cache !== null) {
+            return $this->user_style_cache ?: null;
+        }
+
+        // Check if style learning is enabled
+        if (!$this->rc->config->get('ai_autoreply_use_style_learning', true)) {
+            $this->user_style_cache = false;
+            return null;
+        }
+
+        // Try to use style_learning plugin first
+        $style_plugin = $this->rc->plugins->get_plugin('style_learning');
+        if ($style_plugin && method_exists($style_plugin, 'get_user_style')) {
+            $style = $style_plugin->get_user_style();
+            if ($style) {
+                $this->user_style_cache = $style;
+                return $style;
+            }
+        }
+
+        // Fall back to direct API call
+        $service_url = $this->rc->config->get('ai_autoreply_style_service_url', 'http://localhost:8000');
+        $api_key = $this->rc->config->get('ai_autoreply_style_api_key', '');
+
+        // Get user identifier
+        $identities = $this->rc->user->list_identities();
+        $user_id = !empty($identities[0]['email']) ? $identities[0]['email'] : 'user_' . $this->rc->user->ID;
+
+        $url = rtrim($service_url, '/') . '/api/v1/style/' . urlencode($user_id);
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+
+        $headers = ['Content-Type: application/json'];
+        if (!empty($api_key)) {
+            $headers[] = 'X-API-Key: ' . $api_key;
+        }
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($http_code === 200) {
+            $style = json_decode($response, true);
+            $this->user_style_cache = $style;
+            return $style;
+        }
+
+        $this->user_style_cache = false;
+        return null;
+    }
+
+    /**
+     * Build a personalized prompt using user's writing style.
+     *
+     * @param string $sender_name  Sender's name
+     * @param string $subject      Email subject
+     * @param string $message_text Message content
+     * @param array  $style        User's style profile
+     *
+     * @return string Personalized prompt
+     */
+    private function build_personalized_prompt($sender_name, $subject, $message_text, $style)
+    {
+        // Get user's name from identity
+        $identities = $this->rc->user->list_identities();
+        $user_name = !empty($identities[0]['name']) ? $identities[0]['name'] : 'the user';
+
+        $prompt = "You are {$user_name} writing an email reply.\n\n";
+
+        // Add style information
+        if (!empty($style['style_summary'])) {
+            $prompt .= "Writing style: {$style['style_summary']}\n";
+        }
+
+        $style_profile = $style['style_profile'] ?? [];
+
+        // Add pattern information
+        $patterns = $style_profile['patterns'] ?? [];
+        if (!empty($patterns['common_greetings'])) {
+            $greetings = implode(', ', array_slice($patterns['common_greetings'], 0, 3));
+            $prompt .= "- Use greetings like: {$greetings}\n";
+        }
+        if (!empty($patterns['common_closings'])) {
+            $closings = implode(', ', array_slice($patterns['common_closings'], 0, 3));
+            $prompt .= "- Close with phrases like: {$closings}\n";
+        }
+
+        // Add vocabulary information
+        $vocabulary = $style_profile['vocabulary'] ?? [];
+        if (!empty($vocabulary['average_sentence_length'])) {
+            $prompt .= "- Keep sentences around {$vocabulary['average_sentence_length']} words\n";
+        }
+
+        // Add tone information
+        $tone = $style_profile['tone'] ?? [];
+        if (!empty($tone['formality'])) {
+            $warmth = $tone['warmth'] ?? 5;
+            $warmth_desc = $warmth >= 7 ? 'warm' : ($warmth >= 4 ? 'neutral' : 'reserved');
+            $prompt .= "- Maintain a {$warmth_desc}, {$tone['formality']} tone\n";
+        }
+
+        $prompt .= "\nReply to this email:\n";
+        $prompt .= "From: {$sender_name}\n";
+        $prompt .= "Subject: {$subject}\n\n";
+        $prompt .= "{$message_text}\n\n";
+        $prompt .= "Write a reply that sounds like it was written by {$user_name}, matching their typical writing style. ";
+        $prompt .= "Do not include subject line or email headers in your response, just the body text.";
+
+        return $prompt;
+    }
+
+    /**
      * Generate AI reply using OpenAI API.
      *
      * @param rcube_message $message The original email message
@@ -231,11 +357,20 @@ class ai_autoreply extends rcube_plugin
         $sender_name = $message->sender['name'] ?? $message->sender['mailto'] ?? 'the sender';
         $subject = $message->subject ?? '(no subject)';
 
-        $prompt = "You are a helpful email assistant. Write a professional and friendly reply to the following email.\n\n";
-        $prompt .= "From: {$sender_name}\n";
-        $prompt .= "Subject: {$subject}\n\n";
-        $prompt .= "Email content:\n{$message_text}\n\n";
-        $prompt .= "Write a concise, professional reply. Do not include subject line or email headers in your response, just the body text.";
+        // Try to get user's style profile for personalized prompt
+        $style = $this->get_user_style();
+        if ($style && !empty($style['samples_count']) && $style['samples_count'] >= 3) {
+            // Use personalized prompt if we have enough style data
+            $prompt = $this->build_personalized_prompt($sender_name, $subject, $message_text, $style);
+            rcube::write_log('ai_autoreply', 'Using personalized prompt with style profile');
+        } else {
+            // Fall back to generic prompt
+            $prompt = "You are a helpful email assistant. Write a professional and friendly reply to the following email.\n\n";
+            $prompt .= "From: {$sender_name}\n";
+            $prompt .= "Subject: {$subject}\n\n";
+            $prompt .= "Email content:\n{$message_text}\n\n";
+            $prompt .= "Write a concise, professional reply. Do not include subject line or email headers in your response, just the body text.";
+        }
 
         // Call OpenAI API
         $model = $this->rc->config->get('ai_autoreply_model', 'gpt-4o-mini');
@@ -639,6 +774,18 @@ class ai_autoreply extends rcube_plugin
             ];
         }
 
+        // Style learning integration
+        if (!in_array('ai_autoreply_use_style_learning', $dont_override)) {
+            $field_id = 'ai_autoreply_use_style_learning';
+            $checkbox = new html_checkbox(['name' => '_' . $field_id, 'id' => $field_id, 'value' => 1]);
+
+            $args['blocks']['ai_autoreply']['options'][$field_id] = [
+                'title' => html::label($field_id, $this->gettext('ai_autoreply_use_style')),
+                'content' => $checkbox->show($this->rc->config->get('ai_autoreply_use_style_learning', true) ? 1 : 0)
+                    . html::span(['class' => 'input-group-append'], html::span(['class' => 'input-group-text'], $this->gettext('ai_autoreply_style_desc'))),
+            ];
+        }
+
         return $args;
     }
 
@@ -657,6 +804,7 @@ class ai_autoreply extends rcube_plugin
 
         $args['prefs']['ai_autoreply_enabled'] = (bool) rcube_utils::get_input_value('_ai_autoreply_enabled', rcube_utils::INPUT_POST);
         $args['prefs']['ai_autoreply_autosend'] = (bool) rcube_utils::get_input_value('_ai_autoreply_autosend', rcube_utils::INPUT_POST);
+        $args['prefs']['ai_autoreply_use_style_learning'] = (bool) rcube_utils::get_input_value('_ai_autoreply_use_style_learning', rcube_utils::INPUT_POST);
 
         // Handle API key - only update if changed (not the masked value)
         $api_key = rcube_utils::get_input_value('_ai_autoreply_openai_key', rcube_utils::INPUT_POST);

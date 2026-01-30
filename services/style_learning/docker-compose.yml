@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  style-learning-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql://styleuser:stylepass@style-db:5432/style_learning
+      - API_KEY=${STYLE_LEARNING_API_KEY:-}
+      - DEBUG=${DEBUG:-false}
+    depends_on:
+      style-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - style-learning-network
+
+  style-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=styleuser
+      - POSTGRES_PASSWORD=stylepass
+      - POSTGRES_DB=style_learning
+    volumes:
+      - style_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U styleuser -d style_learning"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - style-learning-network
+
+networks:
+  style-learning-network:
+    driver: bridge
+
+volumes:
+  style_db_data:

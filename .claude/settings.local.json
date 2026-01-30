@@ -3,7 +3,8 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(php -l:*)",
-      "Bash(python3 -c \"import sys,json; json.load\\(sys.stdin\\); print\\(''JSON is valid''\\)\")"
+      "Bash(python3 -c \"import sys,json; json.load\\(sys.stdin\\); print\\(''JSON is valid''\\)\")",
+      "Bash(xargs cat:*)"
     ]
   }
 }

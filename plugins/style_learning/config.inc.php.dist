@@ -1,0 +1,25 @@
+<?php
+
+/*
+ +-----------------------------------------------------------------------+
+ | Style Learning Plugin Configuration                                    |
+ |                                                                        |
+ | This plugin captures user-written emails and sends them to a Python   |
+ | LangGraph service for style analysis, building personalized profiles. |
+ +-----------------------------------------------------------------------+
+*/
+
+// Enable/disable style learning (default: true)
+$config['style_learning_enabled'] = true;
+
+// URL of the Python style learning service
+// Should include protocol (http/https) and port if non-standard
+$config['style_learning_service_url'] = 'http://localhost:8000';
+
+// API key for authenticating with the style learning service
+// Leave empty if no authentication is required
+$config['style_learning_api_key'] = '';
+
+// Minimum message length (in characters) required for style learning
+// Messages shorter than this will be ignored
+$config['style_learning_min_length'] = 50;

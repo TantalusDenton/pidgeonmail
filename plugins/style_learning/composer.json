@@ -1,0 +1,23 @@
+{
+    "name": "roundcube/style_learning",
+    "type": "roundcube-plugin",
+    "description": "Learns user writing style from sent emails for AI personalization",
+    "license": "GPL-3.0-or-later",
+    "authors": [
+        {
+            "name": "The Roundcube Dev Team",
+            "email": "devs@roundcube.net",
+            "role": "Developer"
+        }
+    ],
+    "repositories": [
+        {
+            "type": "composer",
+            "url": "https://plugins.roundcube.net"
+        }
+    ],
+    "require": {
+        "php": ">=8.1.0",
+        "roundcube/plugin-installer": ">=0.1.3"
+    }
+}
